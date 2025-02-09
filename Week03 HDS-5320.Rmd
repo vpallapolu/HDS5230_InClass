@@ -1,0 +1,88 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#2. Next, replicate the for-loop based approach (the first one) and two different ways to make that version more efficient, in R. Profile these three approaches, and tabulate the results.
+
+```{r}
+install.packages("readxl")
+install.packages("microbenchmark")
+library(dplyr)
+library(readxl)
+library(microbenchmark)
+```
+
+```{r}
+df <- read_excel("C://Users//pvspa//Downloads//clinics.xls")
+```
+
+```{r}
+# Haversine function
+haversine <- function(lat1, lon1, lat2, lon2) {
+  miles_constant <- 3959
+  lat1 <- deg2rad(lat1)
+  lon1 <- deg2rad(lon1)
+  lat2 <- deg2rad(lat2)
+  lon2 <- deg2rad(lon2)
+  
+  dlat <- lat2 - lat1
+  dlon <- lon2 - lon1
+  
+  a <- sin(dlat / 2)^2 + cos(lat1) * cos(lat2) * sin(dlon / 2)^2
+  c <- 2 * asin(sqrt(a))
+  
+  mi <- miles_constant * c
+  return(mi)
+}
+
+deg2rad <- function(deg) {
+  deg <- as.numeric(deg)  
+  return(deg * pi / 180)
+}
+```
+
+```{r}
+# for loop
+microbenchmark(
+  loop_test = {
+    haversine_series <- nrow(df)
+    lat <- 40.671
+    lon <- -73.985
+    for (i in 1:nrow(df)) {
+      haversine_series[i] <- haversine(lat, lon, df$locLat[i], df$locLong[i])
+    }
+    df$distance <- haversine_series  
+  },
+  times = 10
+)
+```
+
+**Interpretation:** The mean execution time for the forloop method to calculate the distance between two points(Longitude, and Latitude) using haversine formula is found to be 6 milli(6113 micro) seconds, which is slower than the below apply function's execution time.
+
+```{r}
+# apply function
+microbenchmark(
+  apply_func = {
+    df$distance <- apply(df, 1, function(row) haversine(40.671, -73.985, row["locLat"], row["locLong"]))
+  }, times = 10
+)
+```
+
+**Interpretation:** The mean execution time for the apply function to calculate the distance between two points(Longitude, and Latitude) using haversine formula is found to be 886 micro seconds, which is faster than the above mentioned for loop's execution time and slower than the below vectorization's execution time.
+
+```{r}
+# Vectorization
+microbenchmark(
+  vectorized = {
+    df$distance <- haversine(40.671, -73.985, df$locLat, df$locLong)  
+  }, times = 10
+)
+```
+
+**Interpretation:** The mean execution time for the vectorization through columns using base R to calculate the distance between two points(Longitude, and Latitude) using haversine formula is found to be 100 micro seconds, which is faster than the above mentioned for loop, and apply function's execution time.
+
+-   Hence, we can say that, in R the order of execution time for optimization in ascending order is: for_loop \< apply \< Vectorization.
+
+```{r}
+```
