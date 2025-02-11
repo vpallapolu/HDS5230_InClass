@@ -1,0 +1,203 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+install.packages("testthat")
+library(data.table)
+library(purrr)
+library(testthat)
+```
+
+```{r}
+## Load the data
+clinic.dt <- fread("C:\\Users\\pvspa\\Downloads\\healthcare-data\\healthcare-data\\Clinic.csv") 
+## Load Clinic
+clinic.dt
+```
+
+```{r}
+test_that("Clinic loaded", { expect_equal(clinic.dt[,length(ClinicCode)], 60)})
+test_that("Clinic loaded",{ expect_equal(clinic.dt[,.N], 60)})
+```
+
+```{r}
+## Load DiseaseMap
+diseasemap.dt <- diseasemap <- fread("C:\\Users\\pvspa\\Downloads\\healthcare-data\\healthcare-data\\DiseaseMap.csv")
+diseasemap.dt 
+```
+
+```{r}
+test_that("Disease loaded", { expect_equal(diseasemap.dt[,.N],3419)})
+```
+
+```{r}
+##Load ICDCodes
+icdcodes.dt <- fread("C:\\Users\\pvspa\\Downloads\\healthcare-data\\healthcare-data\\ICDCodes.csv") 
+icdcodes.dt 
+```
+
+```{r}
+test_that("ICD10 loaded", { expect_equal(icdcodes.dt[,.N],3419)})
+```
+
+```{r}
+##Load InsuranceProvider
+insuranceprov.dt <- fread("C:\\Users\\pvspa\\Downloads\\healthcare-data\\healthcare-data\\InsuranceProvider.csv") 
+insuranceprov.dt 
+```
+
+```{r}
+test_that("Insurance loaded", { expect_equal(insuranceprov.dt[,.N],15)})
+```
+
+```{r}
+##Load Mortality
+mortality.dt <- fread("C:\\Users\\pvspa\\Downloads\\healthcare-data\\healthcare-data\\Mortality.csv") 
+mortality.dt 
+```
+
+```{r}
+test_that("Mortality loaded", { expect_equal(mortality.dt[,.N],7094)})
+```
+
+```{r}
+##Load Outpatient Visit
+outpatient.visit.dt <- fread("C:\\Users\\pvspa\\Downloads\\healthcare-data\\healthcare-data\\OutpatientVisit.csv") 
+outpatient.visit.dt 
+```
+
+```{r}
+test_that("Outpatient loaded", { expect_equal(outpatient.visit.dt [,.N],174690)})
+```
+
+```{r}
+## Load Patient
+patient.dt <- fread("C:\\Users\\pvspa\\Downloads\\healthcare-data\\healthcare-data\\Patient.csv") 
+patient.dt
+```
+
+```{r}
+test_that("Patient loaded", { expect_equal(patient.dt [,.N],20000)})
+```
+
+```{r}
+## 1
+## Merge patient and Mortality and compare that with patient
+patient.mortality.dt <- merge(patient.dt, mortality.dt, by="PatientID", all=TRUE)
+patient.mortality.dt
+```
+
+```{r}
+patient.mortality.dt[, mortality := !is.na(DateOfDeath)]
+mortality.table <- patient.mortality.dt[,prop.table(table(Gender,mortality),1)]
+```
+
+```{r}
+female.mort <- mortality.table["female", "TRUE"]
+male.mort <- mortality.table["male", "TRUE"]
+```
+
+```{r}
+## results show that there is a difference - see the computations below
+female.mort 
+male.mort 
+```
+
+```{r}
+menMoreLikely = female.mort < male.mort # FALSE because female mort = 35.1%; male mort = 35.9%
+test_that("men more likely to die", { expect_equal(menMoreLikely, TRUE)})
+
+```
+
+```{r}
+## 2. Combine Outpatient.visit with Disease on ICD10 code
+
+#wide to long to include ICD10_1, ICD10_2, ICD10_3 into a single ICD10 column
+outpatient.visit.dt <- melt(outpatient.visit.dt, id.vars = setdiff(names(outpatient.visit.dt), c("ICD10_1", "ICD10_2", "ICD10_3")),
+                        variable.name = 'ICD10_class',
+                        value.name = 'ICD10')
+#to remove the possible duplication, I just used the required columns
+outpatient.visits.dt <- outpatient.visit.dt[, .(ICD10, PatientID)]
+diseasemap.dt <- diseasemap.dt[, .(ICD10, Condition, DiseaseMapID)]
+# Merge based on ICD10
+outpatient.disease.dt <- merge(outpatient.visits.dt, diseasemap.dt, by = "ICD10")
+outpatient.disease.dt
+```
+```{r}
+#merge patient.dt to the above merged outpatient.visit.dt to add gender column
+setkey(outpatient.disease.dt, PatientID)
+setkey(patient.dt, PatientID)
+outpatient.disease.dt[patient.dt, Gender:= Gender]
+#remove duplicates using unique()
+outpatient.disease.dt<- unique(outpatient.disease.dt)
+outpatient.disease.dt
+```
+
+```{r}
+# total number of patients by Gender and Condition- removing the missing and empty values
+summary.dt <- outpatient.disease.dt[!( Gender == ""| Gender == "MISSING"),.(N=uniqueN(PatientID)), by = .(Condition, Gender)]
+#total patients by condition of all genders- removing the missing and empty values
+total.patients.dt <- outpatient.disease.dt[!( Gender == "" | Gender == "MISSING"),.(N_total = uniqueN(PatientID)), by = .(Condition)]
+#Assigning an "All" value indicating the sum of male and female
+all.genders.dt <- total.patients.dt[, .(Condition, Gender= "All", N = N_total)]
+#binding the "All" assigned column 
+summary.dt <- rbind(summary.dt, all.genders.dt, fill= TRUE)
+#merging the calculated columns
+summary.dt <-  merge(summary.dt, total.patients.dt, by = "Condition")
+#calculate the percentage of patients by gender for each condition
+summary.dt[, percentage := (N / N_total) * 100]
+#downcast to get the desired wide format
+summaries.dt <- dcast(summary.dt, Condition ~ Gender, value.var = "percentage")
+setnames(summaries.dt, old=c("male", "female"), new=c("Men", "Women"))
+setcolorder(summaries.dt, c("Condition", "Men", "Women", "All"))
+summaries.dt
+```
+
+```{r}
+test_that("summaries populated", { expect_equal(summaries.dt [,.N],22)})
+```
+
+```{r}
+## 3.
+str(mortality.dt)
+str(outpatient.visit.dt)
+```
+
+```{r}
+#first visit date for each patient- merge with mortality
+first.visit.dt <- outpatient.visit.dt[, .(FirstVisit = min(VisitDate)), by = PatientID]
+mortality.dt <- mortality.dt[first.visit.dt, on = "PatientID"]
+```
+
+```{r}
+#function to calculate mortality rate for a specific year
+get_mortality_rate <- function(yr) {
+  start.date <- as.IDate(paste0(yr, "-01-01"))
+  end.date <- as.IDate(paste0(yr, "-12-31"))
+#patients who died
+  deaths.dt <- mortality.dt[DateOfDeath >= start.date & DateOfDeath <= end.date]
+#alive at risk patients  
+  at.risk.dt <- mortality.dt[(is.na(DateOfDeath) | DateOfDeath >= start.date) & FirstVisit <= end.date]
+#mortality rate  
+  mortality_rate <- nrow(at.risk.dt[deaths.dt, on="PatientID"])/nrow(at.risk.dt) * 100
+  return(mortality_rate)
+}
+get_mortality_rate(2013)
+```
+```{r} 
+years <- 2005:2018
+mortality_rates <- data.table(Year = years, MortalityRate = sapply(years, get_mortality_rate))
+mortality_rates
+```
+
+```{r}
+test_that("2013 is correct", { expect_equal(get_mortality_rate(2013), 1.638896)})
+```
+
+**Interpretation: ** The mortality rate dropped from the year 2005 to 2018. In the year 2005, there was around 8.5 mortality rate which dropped to a lower number around 2 in 2018, with a slight deviating pattern in 2006 and 2007 where there is slight increase in the rate. Overall, there is a decreasing pattern in the mortality rate.
+
+
+```{r}
+```
