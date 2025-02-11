@@ -1,0 +1,327 @@
+---
+title: "HDS5230 Week02-R Programming Notebook"
+output: html_notebook
+---
+
+```{r}
+#Install packages
+install.packages("doParallel")
+install.packages("foreach")
+install.packages("randomForest")
+install.packages("broom")
+install.packages("data.table")
+```
+
+```{r}
+#load the libraries
+library(randomForest)
+library(MASS)
+library(foreach)
+library(parallel)
+library(doParallel)
+library(ggplot2)
+library(data.table)
+library(microbenchmark)
+library(profvis)
+library(broom)
+```
+
+```{r}
+Boston
+```
+
+### 1. Generate 100 bootstrapped sample of subsets of rows from the Boston dataset and fit a GLM on each of the samples. Perform this serially, that is, fitting of the model on the second bootstrapped sample should happen after the first model has been fit. Use medv as the outcome (which means, you would be fitting regression GLMs).
+
+```{r}
+Rprof('Serial_Bootstrap')
+set.seed(31)
+num_samples <- 100
+bootstrap_samples <- foreach(i = 1:num_samples) %do% {
+  Boston[sample(1:nrow(Boston), replace = TRUE), ]  
+}
+Rprof(NULL)
+
+summaryRprof('Serial_Bootstrap')
+```
+
+```{r}
+#fitting the model to the bootstrapped samples
+Rprof('Serial_Bootstrap_models')
+bootstrap_models <- foreach(sample_data = bootstrap_samples) %do% {
+  glm(medv ~ ., data = sample_data, family = gaussian())  
+}
+Rprof(NULL)
+
+summaryRprof('Serial_Bootstrap_models')
+```
+
+### 2. For each of the model, extract the (or a) statistic that represents model fit.
+
+```{r}
+Rprof('Serial_model_statistics')
+model_fit_stats <- rbindlist(foreach(model = bootstrap_models) %do% {
+  glance(model)
+}, idcol = "Model")
+model_fit_stats
+Rprof(NULL)
+
+summaryRprof('Serial_model_statistics')
+```
+
+### 3. Aggregate the model fit statistics across the 100 bootstrapped samples and plot the results. Additionally compute the mean and inter-quartile range values for these test statistics.
+
+```{r}
+Rprof('Serial_agg_statistics')
+aggregate_stats <- data.frame(
+  Metric = c("Mean_Null_Deviance", "Mean_LogLik", "Mean_AIC", "Mean_BIC", 
+             "Mean_Deviance", "Mean_df_null", "Mean_df_residual", "Mean_nobs"),
+  Value = c(mean(model_fit_stats$null.deviance), mean(model_fit_stats$logLik), mean(model_fit_stats$AIC), mean(model_fit_stats$BIC), mean(model_fit_stats$deviance), mean(model_fit_stats$df.null), mean(model_fit_stats$df.residual), mean(model_fit_stats$nobs))
+)
+Rprof(NULL)
+
+summaryRprof('Serial_agg_statistics')
+aggregate_stats
+```
+
+```{r}
+summary(model_fit_stats)
+```
+
+### Plot of aggregate statistics
+
+```{r}
+#plots
+library(ggplot2)
+ggplot(aggregate_stats, aes(x = Metric, y = Value)) +
+  geom_col(fill = "skyblue", color = "black") +  
+  theme_minimal() +
+  labs(title = "Mean Model Fit Statistics- Serial", y = "Value", x = "Metric") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+```
+
+### Computing IQR
+
+```{r}
+Rprof('Serial_IQR_statistics')
+#IQR statistics
+IQR_stats <- model_fit_stats[, .(
+  IQR_Null_Deviance = IQR(null.deviance),
+  IQR_LogLik = IQR(logLik),
+  IQR_AIC = IQR(AIC),
+  IQR_BIC = IQR(BIC),
+  IQR_Df_null=IQR(df.null),
+  IQR_Df_residual= IQR(df.residual),
+  IQR_Deviance = IQR(deviance),
+  IQR_Nobs= IQR(nobs)
+)]
+Rprof(NULL)
+
+summaryRprof('Serial_IQR_statistics')
+```
+
+### Parallelization setup
+
+```{r}
+cl <- makeCluster(4, type = "PSOCK")  
+registerDoParallel(cl)
+```
+
+### 4. Generate 100 bootstrapped sample of subsets of rows from the Boston dataset and fit a GLM on each of the samples. Perform this Parallely. Use medv as the outcome (which means, you would be fitting regression GLMs).
+
+```{r}
+Rprof('Parallel_bootstrap')
+set.seed(31)
+num_bootstraps <- 100  
+bootstrap_parallel <- foreach(i = 1:num_bootstraps, .packages = c("MASS")) %dopar% {
+  Boston[sample(nrow(Boston), replace = TRUE), ]
+}
+Rprof(NULL)
+
+summaryRprof('Parallel_bootstrap')
+```
+
+### Fitting the models
+
+```{r}
+Rprof('Parallel_bootstrap_model')
+bootstrap_models_parallel <- foreach(sample_data = bootstrap_parallel, .packages = c("MASS")) %dopar% {
+  glm(medv ~ ., data = sample_data, family = gaussian())
+}
+Rprof(NULL)
+
+summaryRprof('Parallel_bootstrap_model')
+```
+
+### Computing the stats of each model
+
+```{r}
+Rprof('Parallel_statistics')
+model_stats_parallel <- foreach(model = bootstrap_models_parallel, .packages = c("broom", "data.table")) %dopar% {
+  glance(model)[, c("df.null", "df.residual", "logLik", "AIC", "BIC",  "deviance", "null.deviance", "nobs")]
+}
+model_stats_parallel <- rbindlist(model_stats_parallel, idcol = "Model")
+Rprof(NULL)
+
+summaryRprof('Parallel_statistics')
+```
+
+```{r}
+summary(model_stats_parallel)
+```
+
+### Aggregating the statistics
+
+```{r}
+Rprof('Parallel_agg_statistics')
+aggregate_stats_parallel <- foreach(metric = names(model_stats_parallel)[-1], .combine = rbind, .packages = "data.table") %dopar% {
+  data.frame(Metric = paste0("Mean_", metric), Value = mean(model_stats_parallel[[metric]], na.rm = TRUE))
+}
+Rprof(NULL)
+
+summaryRprof('Parallel_agg_statistics')
+```
+
+### IQR stats
+
+```{r}
+Rprof('Parallel_IQR')
+IQR_stats_parallel <- foreach(metric = names(model_stats_parallel)[-1], .combine = rbind, .packages = "data.table") %dopar% {
+  data.frame(Metric = paste0("IQR_", metric), Value = IQR(model_stats_parallel[[metric]], na.rm = TRUE))
+}
+Rprof(NULL)
+
+summaryRprof('Parallel_IQR')
+IQR_stats_parallel
+```
+
+### Plot the aggregate stats
+
+```{r}
+plot_data_parallel <- foreach(i = 1:nrow(aggregate_stats_parallel), .combine = rbind, .packages = "data.table") %dopar% {
+  data.frame(Metric = aggregate_stats_parallel$Metric[i], Value = aggregate_stats_parallel$Value[i])
+}
+ggplot(plot_data_parallel, aes(x = Metric, y = Value)) +
+  geom_col(fill = "skyblue", color = "black") +  
+  theme_minimal() +
+  labs(title = "Mean Model Fit Statistics-Parallel", y = "Value", x = "Metric") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+```{r}
+stopCluster(cl)
+```
+
+### 5. Compare the results of serial and parallel execution along the following dimensions:
+
+### 5.1. Are the distributions of the model fit statistics similar or different?
+
+The distribution of model fit statistics for both of the executions are very similar overall. Parallel execution shows slightly more variability in null deviance, logLik, AIC, BIC, and deviance. df.null, nobs, and df.residuals remain almost identical across methods.
+
+Based on the aggregate test statistics plots, the distribution of the metrics appear similar between serial and parallel execution. The method of computation does not introduce significant differences in the statistical outputs, confirming that parallelization may impact execution time but not the statistical results.
+
+Based on the aggregate statistics, the mean values of the model fit statistics are quite similar between serial and parallel executions, the IQRs indicate that the distributions of the statistics in the parallel execution are less spread out than in the serial execution.
+
+### 5.2. Are the execution times for the serial and parallel approaches same or different?
+
+```{r}
+#serial execution microbenchmarking
+
+set.seed(31)
+num_samples <- 100
+timing_results_serial <- microbenchmark(
+  Bootstrap_Samples = {
+    bootstrap_samples <- foreach(i = 1:num_samples) %do% {
+      Boston[sample(1:nrow(Boston), replace = TRUE), ]
+    }
+  },
+  Model_Fitting = {
+    bootstrap_models <- foreach(sample_data = bootstrap_samples) %do% {
+      glm(medv ~ ., data = sample_data, family = gaussian())
+    }
+  },
+  Extract_Statistics = {
+    model_fit_stats <- rbindlist(foreach(model = bootstrap_models) %do% {
+      glance(model)
+    }, idcol = "Model")
+  },
+  Aggregate_Statistics = {
+    aggregate_stats <- data.frame(
+      Metric = c("Mean_Null_Deviance", "Mean_LogLik", "Mean_AIC", "Mean_BIC", 
+                 "Mean_Deviance", "Mean_df_null", "Mean_df_residual", "Mean_nobs"),
+      Value = c(mean(model_fit_stats$null.deviance), mean(model_fit_stats$logLik), 
+                mean(model_fit_stats$AIC), mean(model_fit_stats$BIC), 
+                mean(model_fit_stats$deviance), mean(model_fit_stats$df.null), 
+                mean(model_fit_stats$df.residual), mean(model_fit_stats$nobs))
+    )
+  },
+  Compute_IQR = {
+    IQR_stats <- model_fit_stats[, .(
+      IQR_Null_Deviance = IQR(null.deviance),
+      IQR_LogLik = IQR(logLik),
+      IQR_AIC = IQR(AIC),
+      IQR_BIC = IQR(BIC),
+      IQR_Df_null = IQR(df.null),
+      IQR_Df_residual = IQR(df.residual),
+      IQR_Deviance = IQR(deviance),
+      IQR_Nobs = IQR(nobs)
+    )]
+  },
+  
+  times = 10 
+)
+timing_results_serial
+autoplot(timing_results_serial)
+
+```
+
+```{r}
+cl <- makeCluster(4, type = "PSOCK")  
+registerDoParallel(cl)
+```
+
+```{r}
+# Parallel execution microbenchmarking
+set.seed(31)
+num_bootstraps <- 100  
+num_cores <- detectCores() - 1  
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+timing_results_parallel <- microbenchmark(
+  Bootstrap_Samples_Parallel = {
+    bootstrap_parallel <- foreach(i = 1:num_bootstraps, .packages = c("MASS")) %dopar% {
+      Boston[sample(nrow(Boston), replace = TRUE), ]
+    }
+  },
+  Model_Fitting_Parallel = {
+    bootstrap_models_parallel <- foreach(sample_data = bootstrap_parallel, .packages = c("MASS")) %dopar% {
+      glm(medv ~ ., data = sample_data, family = gaussian())
+    }
+  },
+  Extract_Statistics_Parallel = {
+    model_stats_parallel <- foreach(model = bootstrap_models_parallel, .packages = c("broom", "data.table")) %dopar% {
+      glance(model)[, c("df.null", "df.residual", "logLik", "AIC", "BIC",  "deviance", "null.deviance", "nobs")]
+    }
+    model_stats_parallel <- rbindlist(model_stats_parallel, idcol = "Model")
+  },
+  Aggregate_Statistics_Parallel = {
+    aggregate_stats_parallel <- foreach(metric = names(model_stats_parallel)[-1], .combine = rbind, .packages = "data.table") %dopar% {
+      data.frame(Metric = paste0("Mean_", metric), Value = mean(model_stats_parallel[[metric]], na.rm = TRUE))
+    }
+  },
+  Compute_IQR_Parallel = {
+    IQR_stats_parallel <- foreach(metric = names(model_stats_parallel)[-1], .combine = rbind, .packages = "data.table") %dopar% {
+      data.frame(Metric = paste0("IQR_", metric), Value = IQR(model_stats_parallel[[metric]], na.rm = TRUE))
+    }
+  },
+  times = 10  
+)
+timing_results_parallel
+autoplot(timing_results_parallel)
+stopCluster(cl)
+```
+
+**Interpretation:** Based on the microbenchmarking, the parallel execution consumed more execution time compared to the serial execution. The output results for both the serial and parallel are given in micro and milli seconds respectively. For instance, the model fitting in serial and parallel took 0.032 sec and 0.064 sec respectively. This suggests that the serial execution is more efficient possibly due to the relatively small size of the task, where the overhead of the parallelization doesn't provide the expected benefits.
+
+```{r}
+#rm(list=ls())
+```
