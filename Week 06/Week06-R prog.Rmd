@@ -1,0 +1,258 @@
+---
+title: "R Notebook"
+output: html_notebook
+Name: Venkata Sai Pallavi Pallapolu
+Course: HDS 5230- High Performance Computing
+Assignment: Week 06 - Genetic Algorithm Assignment
+---
+
+##Loading packages
+
+```{r}
+install.packages("geosphere", dependencies = TRUE)
+install.packages("rgdal", dependencies = TRUE)
+install.packages("GA", dependencies = TRUE)
+```
+
+```{r}
+install.packages("sp")
+install.packages("gdalUtils")
+install.packages("rgdal", type="binary")
+install.packages("rgdal", dependencies= TRUE)
+```
+
+```{r}
+install.packages("remotes")
+remotes::install_github("cran/rgdal")
+```
+
+```{r}
+install.packages("sf")
+install.packages("raster")
+install.packages("terra")
+```
+
+```{r}
+install.packages("https://cran.r-project.org/src/contrib/Archive/rgdal/rgdal_1.6-7.tar.gz", repos=NULL, type="source")
+```
+
+```{r}
+library(data.table)
+library(geosphere)
+library(dplyr)
+library(GA)
+library(purrr)
+```
+
+##Importing the geospatial data
+
+```{r}
+## Load the population data
+current_dir <- getwd()
+relative_path <- file.path(current_dir, "Mo_pop_Sim", "Mo_pop_Sim.csv")
+pop.data <- data.table::fread(relative_path)
+str(pop.data)
+frac <- 0.0001
+small.data <- pop.data[sample(1:nrow(pop.data),
+                               size = round(nrow(pop.data) * frac),
+                               replace = F), ## extract a sample of randomlychosen 1% rows
+                        ]  ## and choose all columns
+head(small.data)
+```
+
+```{r}
+library(sf)
+library(data.table)
+## Load the FQHC data
+data_path <- file.path(current_dir, "MO_2018_Federally_Qualified_Health_Center_Locations","MO_2018_Federally_Qualified_Health_Center_Locations", "MO_2018_Federally_Qualified_Health_Center_Locations.shp")
+
+fqhc.data <- data.table(as.data.frame(st_read(data_path, layer = 'MO_2018_Federally_Qualified_Health_Center_Locations')))
+head(fqhc.data)
+```
+
+## Approach following
+
+-   I'm following the maximization of densities of residences within a 30-mile radius for each fqhc.
+
+-   The assumption here is that a location’s fitness can be directly related to its ability to serve people, and a good FQHC location should be one that is close to a large number of residences.
+
+-   The reason behind considering locations with higher densities of residences within a 30-mile radius as better is based on the assumption that higher population density means greater demand for the specialized services, leading to more people benefiting from the service.
+
+-   This ensures that the FQHCs selected will be serving areas where there is a higher concentration of people who could benefit from mental health services, making the intervention more impactful.
+
+```{r}
+## Select a subset of 4 rows, drawn at random, and cols: OBJECTID, Long, Lat
+set.seed(8888)
+no.ctrs <-  8
+no.needed <- 8
+sites.dt <- fqhc.data[sample(1:nrow(fqhc.data), no.ctrs, replace = F),
+                      list(OBJECTID = as.character(OBJECTID),
+                           Longitude,
+                           Latitude)]
+```
+
+```{r}
+## Create combinations of residences and centers
+small.data <- cbind(small.data, resid = c(1:nrow(small.data)))
+setkey(small.data, resid)
+dist.dt <- data.table(CJ(as.character(small.data$resid),
+                         as.character(sites.dt$OBJECTID)))
+names(dist.dt)
+setnames(dist.dt, c("V1", "V2"), c("resid", "OBJECTID"))
+str(dist.dt)
+dist.dt
+```
+
+```{r}
+## Compute distances on a small subset of values - this takes a long time
+# if run on all rows in the dataset
+v <- map_dbl(1:nrow(dist.dt),
+        function(rid){
+          r.rsd <- small.data[resid == dist.dt[rid,resid]]
+          r.fqhc <- fqhc.data[OBJECTID == as.character(dist.dt[rid,OBJECTID])]
+
+          distm(c(r.rsd$long, r.rsd$lat),
+                c(r.fqhc$Longitude, r.fqhc$Latitude),
+                fun = distHaversine)/1609.344
+
+          ## note that the above distance is in meters
+          ## convert it to miles
+        })
+dist.dt[, distance := v]
+dist_within_30m <- dist.dt[distance < 30, ]
+```
+
+```{r}
+dist_within_30m <- dist.dt[distance <= 30]
+residences_within_30m <- dist_within_30m[, .(resid_count = .N), by = OBJECTID]
+fqhc.data$OBJECTID <- as.character(fqhc.data$OBJECTID)
+fqhc.data <- merge(fqhc.data, residences_within_30m, by = "OBJECTID", all.x = TRUE)
+fqhc.data
+```
+
+```{r}
+## Next, use the distance information to make decisions on, let's say top 2 centers
+## The function combn() produces all possible combinations of elements in x, taking m at a time
+## If we want to take all possible combinations of 2 items, out of a set of 4...
+combn(8, 4)
+## the combinations are in columns; a simpler-to-read format is to show them in rows
+t(combn(x=1:8,m = 4)) ## transpose the results using t()
+```
+
+```{r}
+## If we want to identify the two best centers, out of four, for providing the extended services
+## we need identify the two best ones based on, say, the total average distance between each of them
+## and each residence in our sample.
+unique(sites.dt$OBJECTID)
+## Build combinations
+combinations <- data.table(as.data.frame(t(combn(unique(sites.dt$OBJECTID), no.needed))))
+combinations
+```
+
+```{r}
+names(combinations) <- map_chr(1:no.needed,
+                              function(x){
+                                paste0("loc",x)
+                              })
+
+meandists <- dist.dt[, mean(distance), by=OBJECTID]
+ind = 1
+
+get_combined_distance <- function(loc1, loc2, ctr.id){
+
+}
+map_dbl(1:nrow(combinations),
+        function(ind){
+          mean(c(meandists[meandists$OBJECTID == combinations[ind,loc1]]$V1,
+                 meandists[meandists$OBJECTID == combinations[ind,loc2]]$V1))
+        })
+
+combinations[, meandist :=
+               map_dbl(1:nrow(combinations),
+                       function(ind){
+                         mean(c(meandists[meandists$OBJECTID == combinations[ind,loc1]]$V1,
+                                meandists[meandists$OBJECTID == combinations[ind,loc2]]$V1))
+                       })]
+## Find the best one - this is the brute-force approach
+combinations[meandist == min(combinations$meandist)]
+```
+
+##Fitness Function
+
+- I have used the fitness function to select the best FQHCs based on their residence density within 30 miles.
+
+- The fitness function computes the total number of residences within a 30-mile radius for each FQHC. This number will be the "fitness score" for that location.
+
+- For each FQHC, the fitness function find the residences that fall within the 30-mile radius by calculating the distance from each residence to the FQHC location and count how many residences fall within the 30-mile radius.
+
+- It then sums up the number of residences for the set of 8 selected FQHC locations.
+
+- Then, the total number of residences across all 8 selected FQHCs will be returned as the fitness score.
+
+```{r}
+str(residences_within_30m)
+```
+
+```{r}
+#fitness function
+fit.fn <- function(locs) {
+  locs <- as.numeric(locs)
+  total_residences_within_30m <- 0
+
+  for (loc_idx in locs) {
+    loc <- top_fqhcs[loc_idx]
+    current_count <- residences_within_30m[OBJECTID == as.character(loc), resid_count]
+    if (length(current_count) == 0) {
+      current_count <- 0
+    }
+    total_residences_within_30m <- total_residences_within_30m + current_count
+  }
+  # Return the total number of residences as the fitness value (maximized)
+  return(total_residences_within_30m)
+}
+```
+
+```{r}
+top_fqhcs <- unique(sites.dt$OBJECTID)
+no.needed <- 8
+ga_model <- ga(
+  type = "permutation",
+  fitness = function(x) fit.fn(x),  
+  lower = rep(1, no.needed),  
+  upper = rep(length(top_fqhcs), no.needed), 
+  popSize = 50,   
+  maxiter = 1000, 
+  run = 100,
+  pmutation=0.2,
+  pcrossover=0.8)       
+```
+
+```{r}
+summary(ga_model)
+plot(ga_model)
+```
+##GA Application
+
+-  the mean and best fitness value remained the constant for each iteration indicating after a few generations, the GA has found a solution that it cannot improve further, meaning it has likely reached an optimal or local optimal solution.
+
+- The best fitness value is the total number of residences covered by the selected 8 FQHCs that maximize the coverage. This means that the 8 selected FQHCs are serving a total of 319 residences within a 30-mile radius, which is also the same as the mean fitness value.
+
+- The goal was to select FQHCs that served the largest populations, ensuring that mental health services reach the maximum number of people. By evaluating all possible combinations through crossover and mutation, the algorithm seeks to maximize coverage of residential areas within a 30-mile radius of each chosen FQHC. 
+
+- The plot also shows the mean of fitness score constantly at 319 without any change and the best and mean are not indicated as a result.
+
+```{r}
+length(ga_model@solution[1, ])
+```
+```{r}
+best_fqhcs_ids <- top_fqhcs[ga_model@solution[1, ]]
+best_fqhcs_details <- fqhc.data[OBJECTID %in% best_fqhcs_ids, ]
+best_fqhcs_details
+```
+
+##Conclusion
+
+- The above represented facilities, provided with the address are the top fqhcs as per the approach: maximization of densities of residences within a 30-mile radius for each fqhc, that can serve more people for mental health services.
+
+
+
