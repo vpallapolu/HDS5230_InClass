@@ -1,0 +1,229 @@
+---
+title: "Xgboost"
+author: "Venkata Sai Pallavi Pallapolu"
+date: "2025-04-20"
+output: html_document
+---
+
+```{r}
+install.packages("xgboost")
+install.packages("caret")
+install.packages("dplyr")
+install.packages("purrr")
+install.packages("mlbench")
+```
+
+```{r}
+library(microbenchmark)
+library(xgboost)
+library(caret)
+library(dplyr)
+library(mlbench)
+library(purrr)
+```
+
+```{r}
+data("PimaIndiansDiabetes2")
+ds <- as.data.frame(na.omit(PimaIndiansDiabetes2))
+## fit a logistic regression model to obtain a parametric equation
+logmodel <- glm(diabetes ~ .,
+                data = ds,
+                family = "binomial")
+summary(logmodel)
+```
+
+```{r}
+cfs <- coefficients(logmodel) ## extract the coefficients
+prednames <- variable.names(ds)[-9] ## fetch the names of predictors in a vector
+prednames
+```
+
+```{r}
+sz <- 10000000 ## to be used in sampling
+sample(ds$pregnant, size = sz, replace = T)
+```
+
+```{r}
+dfdata <- map_dfc(prednames,
+                  function(nm){ ## function to create a sample-with-replacement for each pred.
+                    eval(parse(text = paste0("sample(ds$",nm,
+                                             ", size = sz, replace = T)")))
+                  }) ## map the sample-generator on to the vector of predictors
+## and combine them into a dataframe
+```
+
+```{r}
+names(dfdata) <- prednames
+dfdata
+```
+
+```{r}
+class(cfs[2:length(cfs)])
+```
+
+```{r}
+length(cfs)
+length(prednames)
+## Next, compute the logit values
+pvec <- map((1:8),
+            function(pnum){
+              cfs[pnum+1] * eval(parse(text = paste0("dfdata$", prednames[pnum])))
+            }) %>% ## create beta[i] * x[i]
+  reduce(`+`) + ## sum(beta[i] * x[i])
+  cfs[1] ## add the intercept
+```
+
+```{r}
+## exponentiate the logit to obtain probability values of thee outcome variable
+dfdata['outcome'] <- ifelse(1/(1 + exp(-(pvec))) > 0.5, 1,
+                            0)
+```
+
+```{r}
+write.csv(dfdata, "dfdata_10M.csv", row.names = FALSE)
+```
+
+```{r}
+# Sample different sizes
+sizes <- c(1e2, 1e3, 1e4, 1e5, 1e6, 1e7)
+datasets <- lapply(sizes, function(sz) sample_n(dfdata, sz, replace = TRUE))
+names(datasets) <- as.character(sizes) # Name each dataset in the list according to its size
+```
+
+**XGBoost in R – direct use of xgboost() with simple cross-validation**
+
+```{r}
+xgb_results_simplecv <- lapply(names(datasets), function(sz) {
+  data <- datasets[[sz]]
+  # Prepare the feature matrix (X) and target vector (y)
+  X <- as.matrix(data[, -which(names(data) == "outcome")])
+  y <- data$outcome
+  # Create a DMatrix object for XGBoost
+  dtrain <- xgb.DMatrix(data=X, label = y)
+  params <- list(objective="binary:logistic",
+                 eval_metric="error",
+                 tree_method="hist",  #histogram-based method for faster computation
+                 verbosity=0)
+  start_time <- Sys.time()
+  cv_model <- xgb.cv(params=params,
+                     data=dtrain,
+                     nrounds=25,
+                     nfold=5, # 5-fold cross-validation
+                     verbose=0,
+                     early_stopping_rounds=3, # Stop early if no improvement after 3 rounds
+                     maximize=FALSE,
+                     prediction=FALSE)
+  end_time <- Sys.time()
+  acc <- 1 - min(cv_model$evaluation_log$test_error_mean)
+  # Return results as a data frame
+  data.frame(Method="XGBoost in R – fast direct xgboost() with simple CV",
+             `Dataset size`=as.integer(sz),
+             `Testing set predictive performance`=round(acc, 4),
+             `Time taken for the model to be fit`=round(as.numeric(difftime(end_time, start_time, units="secs")), 2))})
+```
+
+```{r}
+xgb_results_simplecv_df <- bind_rows(xgb_results_simplecv)
+xgb_results_simplecv_df
+```
+
+**XGBoost in R – via caret, with 5-fold CV simple cross-validation**
+
+```{r}
+# Sample different sizes
+sizes <- c(1e2, 1e3, 1e4, 1e5, 1e6)
+datasets <- lapply(sizes, function(sz) sample_n(dfdata, sz, replace = TRUE))
+names(datasets) <- as.character(sizes)
+```
+
+```{r}
+# Initialize an empty list to store results for each dataset size
+results_5fold <- list()
+for (sz in names(datasets)) {
+  data <- datasets[[sz]]
+  # Convert the target variable outcome to a factor for classification
+  data$outcome <- as.factor(data$outcome)
+  # Set up the cross-validation control
+  ctrl <- trainControl(method="cv", 
+                       number=5, # 5 folds
+                       verboseIter=FALSE,
+                       allowParallel=TRUE) # Enable parallel processing for faster training
+  tune_grid <- expand.grid(nrounds=25,
+                           max_depth=3:4,     
+                           eta=0.1, # Learning rate     
+                           gamma=0, # Minimum loss reduction
+                           colsample_bytree=0.8,# Subsample ratio of columns
+                           min_child_weight=1, # Minimum sum of instance weight (hessian) needed in a child
+                           subsample=0.8) # Subsample ratio of training instances
+  start_time <- Sys.time()
+  model <- train(outcome ~ ., # Predict 'outcome' using all other variables
+                 data=data,
+                 method="xgbTree",
+                 trControl=ctrl,
+                 tuneGrid=tune_grid, # Hyperparameter grid
+                 metric="Accuracy",
+                 verbosity=0) # Suppress training output
+  end_time <- Sys.time()
+  acc <- max(model$results$Accuracy)
+  # Store the results in the list
+  results_5fold[[sz]] <- data.frame(`Method used`="XGBoost in R – via caret, with 5-fold CV simple cross-validation",
+                                    `Dataset size`=as.integer(sz),
+                                    `Testing-set predictive performance`=round(acc, 4),
+                                    `Time taken for the model to be fit`=round(as.numeric(difftime(end_time, start_time, units="secs")), 2))}
+```
+
+```{r}
+xgb_results_5foldcv <- bind_rows(results_5fold)
+xgb_results_5foldcv
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
