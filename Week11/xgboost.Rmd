@@ -102,21 +102,21 @@ xgb_results_simplecv <- lapply(names(datasets), function(sz) {
   dtrain <- xgb.DMatrix(data=X, label = y)
   params <- list(objective="binary:logistic",
                  eval_metric="error",
-                 tree_method="hist",  #histogram-based method for faster computation
+                 tree_method="hist",#histogram-based method for faster computation
                  verbosity=0)
   start_time <- Sys.time()
   cv_model <- xgb.cv(params=params,
                      data=dtrain,
                      nrounds=25,
-                     nfold=5, # 5-fold cross-validation
+                     nfold=5, #5-fold cross-validation
                      verbose=0,
-                     early_stopping_rounds=3, # Stop early if no improvement after 3 rounds
+                     early_stopping_rounds=3, #stop early if no improvement after 3 rounds
                      maximize=FALSE,
                      prediction=FALSE)
   end_time <- Sys.time()
   acc <- 1 - min(cv_model$evaluation_log$test_error_mean)
   # Return results as a data frame
-  data.frame(Method="XGBoost in R – fast direct xgboost() with simple CV",
+  data.frame(`Method used`="XGBoost in R – fast direct xgboost() with simple CV",
              `Dataset size`=as.integer(sz),
              `Testing set predictive performance`=round(acc, 4),
              `Time taken for the model to be fit`=round(as.numeric(difftime(end_time, start_time, units="secs")), 2))})
@@ -128,13 +128,6 @@ xgb_results_simplecv_df
 ```
 
 **XGBoost in R – via caret, with 5-fold CV simple cross-validation**
-
-```{r}
-# Sample different sizes
-sizes <- c(1e2, 1e3, 1e4, 1e5, 1e6)
-datasets <- lapply(sizes, function(sz) sample_n(dfdata, sz, replace = TRUE))
-names(datasets) <- as.character(sizes)
-```
 
 ```{r}
 # Initialize an empty list to store results for each dataset size
@@ -169,7 +162,7 @@ for (sz in names(datasets)) {
   results_5fold[[sz]] <- data.frame(`Method used`="XGBoost in R – via caret, with 5-fold CV simple cross-validation",
                                     `Dataset size`=as.integer(sz),
                                     `Testing-set predictive performance`=round(acc, 4),
-                                    `Time taken for the model to be fit`=round(as.numeric(difftime(end_time, start_time, units="secs")), 2))}
+                                    `Time taken for the model to be fit`=round(as.numeric(difftime(end_time, start_time,nits="secs")), 2))}
 ```
 
 ```{r}
