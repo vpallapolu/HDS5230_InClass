@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1402]:
+# In[1431]:
 
 
 import pandas as pd
@@ -14,33 +14,31 @@ import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
 
 
-# In[1403]:
+# In[1432]:
 
 
-get_ipython().system('curl -O https://raw.githubusercontent.com/vpallapolu/HDS5230_InClass/main/Extra_credit/data/health_activity_data.csv')
+import urllib.request
 
-
-# In[1404]:
-
-
-import pandas as pd
-data = pd.read_csv("health_activity_data.csv")
+url = 'https://raw.githubusercontent.com/vpallapolu/HDS5230_InClass/main/Extra_credit/data/health_activity_data.csv'
+filename = 'health_activity_data.csv'
+urllib.request.urlretrieve(url, filename)
+data = pd.read_csv(filename)
 data.head()
 
 
-# In[1405]:
+# In[1433]:
 
 
 data.describe()
 
 
-# In[1406]:
+# In[1434]:
 
 
 data.info()
 
 
-# In[1407]:
+# In[1435]:
 
 
 data.isnull().sum()
@@ -48,7 +46,7 @@ data.isnull().sum()
 
 # Dropping unnecessary columns
 
-# In[1408]:
+# In[1436]:
 
 
 import numpy
@@ -58,19 +56,19 @@ data.head()
 
 # categorizing male and female to 0 and 1
 
-# In[1409]:
+# In[1437]:
 
 
 data['Gender'].unique()
 
 
-# In[1410]:
+# In[1438]:
 
 
 data['Gender'] = data['Gender'].map({'Female': 0, 'Male': 1})
 
 
-# In[1411]:
+# In[1439]:
 
 
 data['Hypertension'] = data['Blood_Pressure'].apply(lambda bp: 1 if int(bp.split('/')[0]) > 120 or int(bp.split('/')[1]) > 80 else 0)
@@ -81,7 +79,7 @@ data.head()
 # encode diabetic, heart disease, and smoker
 # 
 
-# In[1412]:
+# In[1440]:
 
 
 for col in ['Smoker', 'Diabetic', 'Heart_Disease']:
@@ -89,26 +87,26 @@ for col in ['Smoker', 'Diabetic', 'Heart_Disease']:
 data.head()
 
 
-# In[1413]:
+# In[1441]:
 
 
 data.shape
 
 
-# In[1414]:
+# In[1442]:
 
 
 data.hist()
 
 
-# In[1415]:
+# In[1443]:
 
 
 top_corr = high_corr_filtered.head(10) 
 top_corr
 
 
-# In[1416]:
+# In[1444]:
 
 
 plt.figure(figsize=(20, 8))
@@ -117,19 +115,19 @@ plt.title("Correlation Matrix")
 plt.show()
 
 
-# In[1417]:
+# In[1445]:
 
 
 data.head()
 
 
-# In[1418]:
+# In[1446]:
 
 
 data.describe()
 
 
-# In[1419]:
+# In[1447]:
 
 
 import matplotlib.pyplot as plt
@@ -145,13 +143,13 @@ plt.show()
 
 # **model fitting**
 
-# In[1420]:
+# In[1448]:
 
 
 data.columns
 
 
-# In[1421]:
+# In[1449]:
 
 
 # Check for any remaining non-numeric columns (besides the target and the columns to exclude)
@@ -163,7 +161,7 @@ y = data['Heart_Disease']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 
-# In[1422]:
+# In[1450]:
 
 
 # Initialize and train the Random Forest model
@@ -172,14 +170,14 @@ rf_model = RandomForestClassifier(random_state=42)
 rf_model.fit(X_train, y_train)
 
 
-# In[1423]:
+# In[1451]:
 
 
 # Predict the target variable on the test set
 y_pred_rf = rf_model.predict(X_test)
 
 
-# In[1424]:
+# In[1452]:
 
 
 # Evaluate the model performance
@@ -190,7 +188,7 @@ print("Recall:", recall_score(y_test, y_pred_rf, average='weighted', zero_divisi
 print("F1 Score:", f1_score(y_test, y_pred_rf, average='weighted', zero_division=0))
 
 
-# In[1425]:
+# In[1453]:
 
 
 # Prepare predictors and target
@@ -204,7 +202,7 @@ y = data['Heart_Disease']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 
-# In[1426]:
+# In[1454]:
 
 
 # Print the classification report
@@ -212,7 +210,7 @@ print("\nClassification Report:")
 print(classification_report(y_test, y_pred_rf, zero_division=0))
 
 
-# In[1427]:
+# In[1455]:
 
 
 # Confusion Matrix
@@ -223,7 +221,7 @@ plt.ylabel("Actual")
 plt.show()
 
 
-# In[1428]:
+# In[1456]:
 
 
 import joblib
@@ -231,7 +229,7 @@ joblib.dump(rf_model, "Random_Forest_model.pkl")
 joblib.dump(X.columns.tolist(), 'Random_Forest_model_features.pkl')
 
 
-# In[1429]:
+# In[1457]:
 
 
 import streamlit as st
