@@ -99,13 +99,6 @@ data.shape
 data.hist()
 
 
-# In[1443]:
-
-
-top_corr = high_corr_filtered.head(10) 
-top_corr
-
-
 # In[1444]:
 
 
