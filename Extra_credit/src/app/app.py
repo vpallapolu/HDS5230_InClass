@@ -13,7 +13,7 @@ import pandas as pd
 # In[55]:
 
 
-st.title("Heart Disease Risk Predictor (Random Forest)")
+st.title("Heart Disease Risk Predictor (XG Boost)")
 st.markdown("Enter your details to check your heart disease risk.")
 
 
